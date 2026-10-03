@@ -178,13 +178,21 @@ class GpuMonitorOverlayService : Service(), LifecycleOwner, SavedStateRegistryOw
     override fun onBind(intent: Intent?): IBinder? = null
 }
 
+enum class GlitchState {
+    NORMAL,            // Spends most time looking relatively normal
+    SMALL_GLITCHES,    // Subtle band offsets, mild chromatic shift
+    SEVERE_CORRUPTION, // High RGB separation, VRAM blocks, large corrupt regions
+    FREEZE,            // Stale frame freezing, static band holds
+    PARTIAL_RECOVERY   // Artifacts receding, lingering static spots
+}
+
 @Composable
 fun SubtleGpuArtifactOverlay() {
     var frameTick by remember { mutableIntStateOf(0) }
 
-    // Generate a fixed, stable set of permanent blackout spots when entering composition
+    // Fixed, stable set of permanent blackout spots
     val staticBlackSpots = remember {
-        val random = Random(42) // Fixed seed for persistent static placement
+        val random = Random(42)
         val list = mutableListOf<Pair<Offset, Size>>()
         repeat(90) {
             val bx = random.nextFloat() * 1080f
@@ -210,13 +218,119 @@ fun SubtleGpuArtifactOverlay() {
             val height = size.height
             if (width <= 0 || height <= 0) return@Canvas
 
-            val random = Random((frameTick * 17).toLong())
+            // Continuous Progressive Timeline (No video loop / restart)
+            val state = when {
+                frameTick < 100 -> GlitchState.NORMAL
+                frameTick < 250 -> GlitchState.SMALL_GLITCHES
+                frameTick < 450 -> GlitchState.SEVERE_CORRUPTION
+                else -> GlitchState.FREEZE // Holds active degradation & persistent corruption permanently
+            }
 
-            // 1. Polka dots (circles)
-            repeat(25) {
+            val intensity = when (state) {
+                GlitchState.NORMAL -> 0.05f
+                GlitchState.SMALL_GLITCHES -> 0.3f
+                GlitchState.SEVERE_CORRUPTION -> 1.0f
+                GlitchState.FREEZE -> 0.8f
+                else -> 0.5f
+            }
+
+            // Fixed seed for freeze state, dynamic seed for active glitch states
+            val frameSeed = if (state == GlitchState.FREEZE) {
+                (frameTick / 25) * 17L // Hold static frame during freeze without restarting
+            } else {
+                (frameTick * 17).toLong()
+            }
+            val random = Random(frameSeed)
+
+            // 2. Horizontal Corruption: Screen split into bands with X offsets
+            val bandCount = 24
+            val bandHeight = height / bandCount
+            for (b in 0 until bandCount) {
+                val bandY = b * bandHeight
+                if (random.nextFloat() < (0.15f * intensity)) {
+                    val xOffset = (random.nextFloat() * 30f - 15f) * intensity
+                    val bandH = bandHeight * (0.8f + random.nextFloat() * 0.4f) // Stretch/compress
+                    drawRect(
+                        color = Color.Cyan.copy(alpha = 0.04f * intensity),
+                        topLeft = Offset(xOffset.coerceAtLeast(0f), bandY),
+                        size = Size(width, bandH)
+                    )
+                }
+            }
+
+            // Vertical Band Pixel Color Disorientation
+            val vBandCount = 20
+            val vBandWidth = width / vBandCount
+            for (vb in 0 until vBandCount) {
+                if (random.nextFloat() < (0.25f * intensity)) {
+                    val vx = vb * vBandWidth
+                    val yOffset = (random.nextFloat() * 40f - 20f) * intensity
+                    val disorientColor = when (random.nextInt(6)) {
+                        0 -> Color.Magenta.copy(alpha = 0.09f * intensity)
+                        1 -> Color.Cyan.copy(alpha = 0.09f * intensity)
+                        2 -> Color.Yellow.copy(alpha = 0.08f * intensity)
+                        3 -> Color.Green.copy(alpha = 0.07f * intensity)
+                        4 -> Color.Red.copy(alpha = 0.08f * intensity)
+                        else -> Color.Blue.copy(alpha = 0.07f * intensity)
+                    }
+                    val bandH = height * (0.3f + random.nextFloat() * 0.7f)
+                    val startY = random.nextFloat() * (height - bandH)
+                    drawRect(
+                        color = disorientColor,
+                        topLeft = Offset(vx, (startY + yOffset).coerceIn(0f, height)),
+                        size = Size(vBandWidth, bandH)
+                    )
+                }
+            }
+
+            // 3. RGB Channel Separation (Chromatic Aberration Spikes)
+            if (intensity > 0.1f) {
+                val rgbShift = (random.nextFloat() * 12f - 6f) * intensity
+                repeat(4) {
+                    val ry = random.nextFloat() * height
+                    val rh = random.nextFloat() * 10f + 2f
+                    // Red channel offset
+                    drawRect(
+                        color = Color.Red.copy(alpha = 0.06f * intensity),
+                        topLeft = Offset(rgbShift, ry),
+                        size = Size(width, rh)
+                    )
+                    // Cyan/Blue channel offset
+                    drawRect(
+                        color = Color.Cyan.copy(alpha = 0.06f * intensity),
+                        topLeft = Offset(-rgbShift, ry + 2f),
+                        size = Size(width, rh)
+                    )
+                }
+            }
+
+            // 4. VRAM-style Block Corruption (8-100 px blocks)
+            val blockCount = (12 * intensity).toInt()
+            repeat(blockCount) {
+                val bx = random.nextFloat() * width
+                val by = random.nextFloat() * height
+                val bw = random.nextFloat() * 80f + 10f
+                val bh = random.nextFloat() * 40f + 8f
+                val blockColor = when (random.nextInt(5)) {
+                    0 -> Color.Red
+                    1 -> Color.Green
+                    2 -> Color.Blue
+                    3 -> Color.Magenta
+                    else -> Color.Yellow
+                }
+                drawRect(
+                    color = blockColor.copy(alpha = 0.1f * intensity),
+                    topLeft = Offset(bx, by),
+                    size = Size(bw, bh)
+                )
+            }
+
+            // 5. Texture & UI Corruption (Polka dots, checkerboard, polygon tearing)
+            val polkaCount = (30 * intensity).toInt()
+            repeat(polkaCount) {
                 val cx = random.nextFloat() * width
                 val cy = random.nextFloat() * height
-                val radius = random.nextFloat() * 15f + 5f
+                val radius = random.nextFloat() * 15f + 4f
                 val color = when (random.nextInt(5)) {
                     0 -> Color.Red
                     1 -> Color.Yellow
@@ -225,90 +339,44 @@ fun SubtleGpuArtifactOverlay() {
                     else -> Color.Green
                 }
                 drawCircle(
-                    color = color.copy(alpha = 0.12f),
+                    color = color.copy(alpha = 0.1f * intensity),
                     radius = radius,
                     center = Offset(cx, cy)
                 )
             }
 
-            // 2. Random colored blocks / squares
-            repeat(8) {
-                val bx = random.nextFloat() * width
-                val by = random.nextFloat() * height
-                val bw = random.nextFloat() * 60f + 10f
-                val bh = random.nextFloat() * 20f + 5f
-                val color = when (random.nextInt(4)) {
-                    0 -> Color.Red
-                    1 -> Color.Green
-                    2 -> Color.Blue
-                    else -> Color.Magenta
+            // Polygon geometry tearing
+            if (intensity > 0.2f) {
+                repeat((3 * intensity).toInt()) {
+                    val path = androidx.compose.ui.graphics.Path().apply {
+                        val x1 = random.nextFloat() * width
+                        val y1 = random.nextFloat() * height
+                        val x2 = x1 + random.nextFloat() * 60f - 30f
+                        val y2 = y1 + random.nextFloat() * 60f - 30f
+                        val x3 = x1 + random.nextFloat() * 60f - 30f
+                        val y3 = y1 + random.nextFloat() * 60f - 30f
+                        moveTo(x1, y1)
+                        lineTo(x2, y2)
+                        lineTo(x3, y3)
+                        close()
+                    }
+                    drawPath(
+                        path = path,
+                        color = if (random.nextBoolean()) Color.White.copy(alpha = 0.05f * intensity) else Color.Black.copy(alpha = 0.08f * intensity)
+                    )
                 }
-                drawRect(
-                    color = color.copy(alpha = 0.08f),
-                    topLeft = Offset(bx, by),
-                    size = Size(bw, bh)
-                )
             }
 
-            // 3. Random colored pixels ("sparkles")
-            repeat(40) {
-                val px = random.nextFloat() * width
-                val py = random.nextFloat() * height
-                drawRect(
-                    color = if (random.nextBoolean()) Color.White.copy(alpha = 0.15f) else Color.Cyan.copy(alpha = 0.15f),
-                    topLeft = Offset(px, py),
-                    size = Size(3f, 3f)
-                )
-            }
-
-            // 4. Black or white triangles / polygons
-            repeat(3) {
-                val path = androidx.compose.ui.graphics.Path().apply {
-                    val x1 = random.nextFloat() * width
-                    val y1 = random.nextFloat() * height
-                    val x2 = x1 + random.nextFloat() * 50f - 25f
-                    val y2 = y1 + random.nextFloat() * 50f - 25f
-                    val x3 = x1 + random.nextFloat() * 50f - 25f
-                    val y3 = y1 + random.nextFloat() * 50f - 25f
-                    moveTo(x1, y1)
-                    lineTo(x2, y2)
-                    lineTo(x3, y3)
-                    close()
-                }
-                drawPath(
-                    path = path,
-                    color = if (random.nextBoolean()) Color.White.copy(alpha = 0.05f) else Color.Black.copy(alpha = 0.08f)
-                )
-            }
-
-            // 5. Horizontal and vertical artifact lines
-            repeat(5) {
-                val lineY = random.nextFloat() * height
-                drawRect(
-                    color = Color.Yellow.copy(alpha = 0.06f),
-                    topLeft = Offset(0f, lineY),
-                    size = Size(width, 1.5f)
-                )
-            }
-            repeat(3) {
-                val lineX = random.nextFloat() * width
-                drawRect(
-                    color = Color.Green.copy(alpha = 0.05f),
-                    topLeft = Offset(lineX, 0f),
-                    size = Size(1.5f, height)
-                )
-            }
-
-            // 6. Checkerboard / missing texture pattern patch
-            if (random.nextFloat() < 0.4f) {
-                val cx = random.nextFloat() * (width - 100f)
-                val cy = random.nextFloat() * (height - 100f)
+            // Checkerboard missing texture patch
+            if (random.nextFloat() < (0.5f * intensity)) {
+                val cx = random.nextFloat() * (width - 120f)
+                val cy = random.nextFloat() * (height - 120f)
                 val gridSize = 12f
                 for (r in 0 until 4) {
                     for (c in 0 until 4) {
                         if ((r + c) % 2 == 0) {
                             drawRect(
-                                color = Color.Magenta.copy(alpha = 0.07f),
+                                color = Color.Magenta.copy(alpha = 0.08f * intensity),
                                 topLeft = Offset(cx + c * gridSize, cy + r * gridSize),
                                 size = Size(gridSize, gridSize)
                             )
@@ -317,28 +385,16 @@ fun SubtleGpuArtifactOverlay() {
                 }
             }
 
-            // 7. Stable, non-sparkly persistent blackouts that stay fixed at the exact same spot until turned off
-            val elapsedSeconds = frameTick / 20 // 20 FPS -> 20 ticks = 1 second
-            val visibleSpotsCount = (elapsedSeconds * 4).coerceIn(0, staticBlackSpots.size)
-
+            // 1 & 7. Stale-frame persistence & Static black spot corruption
+            val visibleSpotsCount = (staticBlackSpots.size * intensity).toInt().coerceIn(2, staticBlackSpots.size)
             for (i in 0 until visibleSpotsCount) {
                 val spot = staticBlackSpots[i]
                 val actualX = (spot.first.x / 1080f) * width
                 val actualY = (spot.first.y / 2400f) * height
                 drawRect(
-                    color = Color.Black,
+                    color = Color.Black.copy(alpha = 0.85f),
                     topLeft = Offset(actualX, actualY),
                     size = spot.second
-                )
-            }
-
-            // When all static spots are visible, gradually fade to full black screen (turn off simulation)
-            if (visibleSpotsCount >= staticBlackSpots.size) {
-                val fullBlackAlpha = ((elapsedSeconds - (staticBlackSpots.size / 4)) / 10f).coerceIn(0f, 1f)
-                drawRect(
-                    color = Color.Black.copy(alpha = fullBlackAlpha),
-                    topLeft = Offset(0f, 0f),
-                    size = Size(width, height)
                 )
             }
         }

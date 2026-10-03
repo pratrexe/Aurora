@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">edudel</string>
+    <string name="a11y_desc">GPU Failure Simulation Overlay Service for drawing above system status bar and lock screen.</string>
 </resources>

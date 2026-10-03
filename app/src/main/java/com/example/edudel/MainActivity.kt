@@ -10,7 +10,6 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -43,8 +42,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -52,7 +49,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.edudel.ui.theme.EdudelTheme
 import kotlinx.coroutines.delay
-import kotlin.random.Random
 
 class MainActivity : ComponentActivity() {
 
@@ -117,6 +113,11 @@ class MainActivity : ComponentActivity() {
                                     Uri.parse("package:$packageName")
                                 )
                                 startActivity(intent)
+                            },
+                            onOpenAccessibilitySettings = {
+                                val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                                startActivity(intent)
+                                Toast.makeText(this, "Enable 'edudel' under Accessibility to activate top-layer overlay.", Toast.LENGTH_LONG).show()
                             }
                         )
                     }
@@ -147,7 +148,8 @@ fun MainControlScreen(
     onStartSimulation: () -> Unit,
     onStartOverlayService: (stage: Int) -> Unit,
     onStopOverlayService: () -> Unit,
-    onGrantPermission: () -> Unit
+    onGrantPermission: () -> Unit,
+    onOpenAccessibilitySettings: () -> Unit
 ) {
     Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
         Column(
@@ -193,7 +195,7 @@ fun MainControlScreen(
                     Text(
                         text = "• Stage 1: Thin green vertical line overlay.\n" +
                                 "• Stage 2: Full GPU failure & corruption simulation.\n" +
-                                "• Display over apps and lock screen.",
+                                "• TYPE_ACCESSIBILITY_OVERLAY sits above status bar & lock screen.",
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
@@ -201,12 +203,22 @@ fun MainControlScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Grant Permission Button
+            // Grant System Overlay Permission Button
             OutlinedButton(
                 onClick = onGrantPermission,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text(text = "1. Grant 'Display over other apps' Permission")
+                Text(text = "1. Grant 'Display over other apps'")
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Enable Accessibility Service Overlay Button
+            OutlinedButton(
+                onClick = onOpenAccessibilitySettings,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(text = "2. Enable Accessibility Overlay (Highest Priority)")
             }
 
             Spacer(modifier = Modifier.height(12.dp))

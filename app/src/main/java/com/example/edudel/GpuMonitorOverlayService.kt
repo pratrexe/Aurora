@@ -50,6 +50,8 @@ class GpuMonitorOverlayService : Service(), LifecycleOwner, SavedStateRegistryOw
 
     companion object {
         const val ACTION_STOP = "com.example.edudel.ACTION_STOP"
+        const val EXTRA_STAGE = "com.example.edudel.EXTRA_STAGE"
+        var currentStageState = mutableIntStateOf(1)
         private const val CHANNEL_ID = "GpuMonitorChannel"
         private const val NOTIFICATION_ID = 1001
     }
@@ -70,6 +72,9 @@ class GpuMonitorOverlayService : Service(), LifecycleOwner, SavedStateRegistryOw
             stopSelf()
             return START_NOT_STICKY
         }
+
+        val requestedStage = intent?.getIntExtra(EXTRA_STAGE, currentStageState.intValue) ?: currentStageState.intValue
+        currentStageState.intValue = requestedStage
 
         startForeground(NOTIFICATION_ID, createNotification())
         showOverlay()
@@ -94,7 +99,9 @@ class GpuMonitorOverlayService : Service(), LifecycleOwner, SavedStateRegistryOw
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                     WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
                     WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
-                    WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
+                    WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+                    WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
+                    WindowManager.LayoutParams.FLAG_ALLOW_LOCK_WHILE_SCREEN_ON,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
@@ -104,13 +111,22 @@ class GpuMonitorOverlayService : Service(), LifecycleOwner, SavedStateRegistryOw
             setViewTreeLifecycleOwner(this@GpuMonitorOverlayService)
             setViewTreeSavedStateRegistryOwner(this@GpuMonitorOverlayService)
             setContent {
-                SubtleGpuArtifactOverlay()
+                SubtleGpuArtifactOverlay(stage = currentStageState.intValue)
             }
         }
 
         overlayView = composeView
         try {
             windowManager.addView(composeView, params)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        try {
+            val lockIntent = Intent(this, LockScreenOverlayActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(lockIntent)
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -148,7 +164,7 @@ class GpuMonitorOverlayService : Service(), LifecycleOwner, SavedStateRegistryOw
 
         return builder
             .setContentTitle("GPU Failure Simulation Active")
-            .setContentText("Subtle GPU corruption overlay running...")
+            .setContentText("Stage ${currentStageState.intValue} simulation running...")
             .setSmallIcon(android.R.drawable.ic_menu_manage)
             .addAction(
                 Notification.Action.Builder(
@@ -179,18 +195,37 @@ class GpuMonitorOverlayService : Service(), LifecycleOwner, SavedStateRegistryOw
 }
 
 enum class GlitchState {
-    NORMAL,            // Spends most time looking relatively normal
-    SMALL_GLITCHES,    // Subtle band offsets, mild chromatic shift
-    SEVERE_CORRUPTION, // High RGB separation, VRAM blocks, large corrupt regions
-    FREEZE,            // Stale frame freezing, static band holds
-    PARTIAL_RECOVERY   // Artifacts receding, lingering static spots
+    NORMAL,
+    SMALL_GLITCHES,
+    SEVERE_CORRUPTION,
+    FREEZE,
+    PARTIAL_RECOVERY
 }
 
 @Composable
-fun SubtleGpuArtifactOverlay() {
+fun SubtleGpuArtifactOverlay(stage: Int = GpuMonitorOverlayService.currentStageState.intValue) {
+    if (stage == 1) {
+        // Stage 1: Just a thin green vertical line
+        Box(modifier = Modifier.fillMaxSize()) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val width = size.width
+                val height = size.height
+                if (width <= 0 || height <= 0) return@Canvas
+
+                val lineX = width * 0.35f
+                drawRect(
+                    color = Color.Green,
+                    topLeft = Offset(lineX, 0f),
+                    size = Size(2.5f, height)
+                )
+            }
+        }
+        return
+    }
+
+    // Stage 2: Full GPU failure simulation
     var frameTick by remember { mutableIntStateOf(0) }
 
-    // Fixed, stable set of permanent blackout spots
     val staticBlackSpots = remember {
         val random = Random(42)
         val list = mutableListOf<Pair<Offset, Size>>()
@@ -218,12 +253,11 @@ fun SubtleGpuArtifactOverlay() {
             val height = size.height
             if (width <= 0 || height <= 0) return@Canvas
 
-            // Continuous Progressive Timeline (No video loop / restart)
             val state = when {
                 frameTick < 100 -> GlitchState.NORMAL
                 frameTick < 250 -> GlitchState.SMALL_GLITCHES
                 frameTick < 450 -> GlitchState.SEVERE_CORRUPTION
-                else -> GlitchState.FREEZE // Holds active degradation & persistent corruption permanently
+                else -> GlitchState.FREEZE
             }
 
             val intensity = when (state) {
@@ -234,22 +268,21 @@ fun SubtleGpuArtifactOverlay() {
                 else -> 0.5f
             }
 
-            // Fixed seed for freeze state, dynamic seed for active glitch states
             val frameSeed = if (state == GlitchState.FREEZE) {
-                (frameTick / 25) * 17L // Hold static frame during freeze without restarting
+                (frameTick / 25) * 17L
             } else {
                 (frameTick * 17).toLong()
             }
             val random = Random(frameSeed)
 
-            // 2. Horizontal Corruption: Screen split into bands with X offsets
+            // 2. Horizontal Corruption
             val bandCount = 24
             val bandHeight = height / bandCount
             for (b in 0 until bandCount) {
                 val bandY = b * bandHeight
                 if (random.nextFloat() < (0.15f * intensity)) {
                     val xOffset = (random.nextFloat() * 30f - 15f) * intensity
-                    val bandH = bandHeight * (0.8f + random.nextFloat() * 0.4f) // Stretch/compress
+                    val bandH = bandHeight * (0.8f + random.nextFloat() * 0.4f)
                     drawRect(
                         color = Color.Cyan.copy(alpha = 0.04f * intensity),
                         topLeft = Offset(xOffset.coerceAtLeast(0f), bandY),
@@ -283,19 +316,17 @@ fun SubtleGpuArtifactOverlay() {
                 }
             }
 
-            // 3. RGB Channel Separation (Chromatic Aberration Spikes)
+            // 3. RGB Channel Separation
             if (intensity > 0.1f) {
                 val rgbShift = (random.nextFloat() * 12f - 6f) * intensity
                 repeat(4) {
                     val ry = random.nextFloat() * height
                     val rh = random.nextFloat() * 10f + 2f
-                    // Red channel offset
                     drawRect(
                         color = Color.Red.copy(alpha = 0.06f * intensity),
                         topLeft = Offset(rgbShift, ry),
                         size = Size(width, rh)
                     )
-                    // Cyan/Blue channel offset
                     drawRect(
                         color = Color.Cyan.copy(alpha = 0.06f * intensity),
                         topLeft = Offset(-rgbShift, ry + 2f),
@@ -304,7 +335,7 @@ fun SubtleGpuArtifactOverlay() {
                 }
             }
 
-            // 4. VRAM-style Block Corruption (8-100 px blocks)
+            // 4. VRAM-style Block Corruption
             val blockCount = (12 * intensity).toInt()
             repeat(blockCount) {
                 val bx = random.nextFloat() * width
@@ -385,7 +416,7 @@ fun SubtleGpuArtifactOverlay() {
                 }
             }
 
-            // 1 & 7. Stale-frame persistence & Static black spot corruption
+            // 7. Persistent static blackouts
             val visibleSpotsCount = (staticBlackSpots.size * intensity).toInt().coerceIn(2, staticBlackSpots.size)
             for (i in 0 until visibleSpotsCount) {
                 val spot = staticBlackSpots[i]

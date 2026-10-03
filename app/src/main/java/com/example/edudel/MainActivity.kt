@@ -15,11 +15,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -82,7 +84,7 @@ class MainActivity : ComponentActivity() {
                                     Toast.LENGTH_LONG
                                 ).show()
                             },
-                            onStartOverlayService = {
+                            onStartOverlayService = { stage ->
                                 if (!Settings.canDrawOverlays(this)) {
                                     Toast.makeText(this, "Please grant 'Display over other apps' permission first.", Toast.LENGTH_LONG).show()
                                     val intent = Intent(
@@ -91,13 +93,15 @@ class MainActivity : ComponentActivity() {
                                     )
                                     startActivity(intent)
                                 } else {
-                                    val serviceIntent = Intent(this, GpuMonitorOverlayService::class.java)
+                                    val serviceIntent = Intent(this, GpuMonitorOverlayService::class.java).apply {
+                                        putExtra(GpuMonitorOverlayService.EXTRA_STAGE, stage)
+                                    }
                                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                                         startForegroundService(serviceIntent)
                                     } else {
                                         startService(serviceIntent)
                                     }
-                                    Toast.makeText(this, "Background Subtle GPU Overlay Started!", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(this, "Background Stage $stage Overlay Started!", Toast.LENGTH_SHORT).show()
                                 }
                             },
                             onStopOverlayService = {
@@ -141,7 +145,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun MainControlScreen(
     onStartSimulation: () -> Unit,
-    onStartOverlayService: () -> Unit,
+    onStartOverlayService: (stage: Int) -> Unit,
     onStopOverlayService: () -> Unit,
     onGrantPermission: () -> Unit
 ) {
@@ -165,7 +169,7 @@ fun MainControlScreen(
             Spacer(modifier = Modifier.height(12.dp))
 
             Text(
-                text = "Detects & simulates subtle GPU screen artifacts and visual corruption system-wide over other apps.",
+                text = "Simulates GPU artifacts & failure stages system-wide over other apps.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -181,15 +185,15 @@ fun MainControlScreen(
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        text = "Background Overlay Controls",
+                        text = "Background Overlay Controls & Stages",
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 15.sp
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "• Runs as a background Foreground Service.\n" +
-                                "• Renders a *subtle* GPU monitor artifact overlay across any Android app.\n" +
-                                "• Reversible: Stop via notification action or in-app button.",
+                        text = "• Stage 1: Thin green vertical line overlay.\n" +
+                                "• Stage 2: Full GPU failure & corruption simulation.\n" +
+                                "• Display over apps and lock screen.",
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
@@ -205,15 +209,27 @@ fun MainControlScreen(
                 Text(text = "1. Grant 'Display over other apps' Permission")
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-            // Start Background Overlay
-            Button(
-                onClick = onStartOverlayService,
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-            ) {
-                Text(text = "START BACKGROUND SUBTLE OVERLAY")
+            // Stage selection buttons
+            Row(modifier = Modifier.fillMaxWidth()) {
+                Button(
+                    onClick = { onStartOverlayService(1) },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+                ) {
+                    Text(text = "START STAGE 1\n(Green Line)", fontSize = 12.sp)
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                Button(
+                    onClick = { onStartOverlayService(2) },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                ) {
+                    Text(text = "START STAGE 2\n(GPU Failure)", fontSize = 12.sp)
+                }
             }
 
             Spacer(modifier = Modifier.height(10.dp))
@@ -222,7 +238,7 @@ fun MainControlScreen(
             Button(
                 onClick = onStopOverlayService,
                 modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
             ) {
                 Text(text = "STOP BACKGROUND OVERLAY")
             }
@@ -234,7 +250,7 @@ fun MainControlScreen(
                 onClick = onStartSimulation,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text(text = "Test In-App Simulation Mode (Volume Up x7 to Exit)")
+                Text(text = "Test In-App Simulation (Volume Up x7 to Exit)")
             }
         }
     }
@@ -256,7 +272,7 @@ fun GpuFailureSimulationScreen(pressCount: Int, targetPresses: Int) {
             .fillMaxSize()
             .background(Color.Black)
     ) {
-        GpuArtifactCanvas(frameTick = frameTick)
+        SubtleGpuArtifactOverlay(stage = 2)
 
         Column(
             modifier = Modifier
@@ -278,35 +294,6 @@ fun GpuFailureSimulationScreen(pressCount: Int, targetPresses: Int) {
                 color = Color.Yellow,
                 fontSize = 12.sp,
                 fontFamily = FontFamily.Monospace
-            )
-        }
-    }
-}
-
-@Composable
-fun GpuArtifactCanvas(frameTick: Int) {
-    Canvas(modifier = Modifier.fillMaxSize()) {
-        val width = size.width
-        val height = size.height
-        if (width <= 0 || height <= 0) return@Canvas
-
-        val seed = frameTick * 31
-        val random = Random(seed)
-
-        repeat(120) {
-            val bx = random.nextFloat() * width
-            val by = random.nextFloat() * height
-            val bw = random.nextFloat() * (width * 0.25f) + 10f
-            val bh = random.nextFloat() * 40f + 5f
-            val r = random.nextInt(256)
-            val g = random.nextInt(256)
-            val b = random.nextInt(256)
-            val a = random.nextFloat() * 0.8f + 0.2f
-
-            drawRect(
-                color = Color(r, g, b).copy(alpha = a),
-                topLeft = Offset(bx, by),
-                size = Size(bw, bh)
             )
         }
     }
